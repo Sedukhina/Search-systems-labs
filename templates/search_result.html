@@ -1,0 +1,11 @@
+{% extends "index.html" %}
+
+{% block search_result %}
+<body>
+    <h2> Search result for {{query}}:  </h2>
+    {% for url in search_results%}
+    <h3><a href="{{ url[2] }}" target="_blank">{{ url[0] }}</a></h3>
+    <h5>{{ url[1] }}</h5>
+    {% endfor %}
+</body>
+{% endblock %}
