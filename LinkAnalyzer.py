@@ -12,6 +12,8 @@ from geopy.geocoders import Nominatim
 
 import spacy
 
+from yake import KeywordExtractor
+
 nlp = spacy.load("en_core_web_sm")
 geo = Nominatim(user_agent="tutorial", timeout=10)
 geo_lock = threading.Lock()
@@ -96,15 +98,20 @@ def CheckURLStatus(url):
 
                 if link_id:
                     # Adding Keywords
+                    keywords = []
                     meta_keywords = soup.find("meta", attrs={"name": "keywords"})
                     if meta_keywords and meta_keywords.get("content"):
                         keywords = meta_keywords["content"]
                         keywords = [keyword.strip() for keyword in keywords.split(",")]
-                        for keyword in keywords:
+                    kw_extractor = KeywordExtractor()
+                    if title:    
+                        keywords.extend([t[0] for t in kw_extractor.extract_keywords(title.lower())])
+                    if description:
+                        keywords.extend([t[0] for t in kw_extractor.extract_keywords(description.lower())])
+                    for keyword in keywords:
                             keyword = keyword.lower()
                             keyword_id = InsertKeyword(keyword)
                             InsertLinkKeyword(link_id, keyword_id)
-
                     # Adding location to link connections
                     doc = ""
                     if title:

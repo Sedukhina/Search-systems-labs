@@ -149,7 +149,9 @@ def InsertKeyword(keyword):
         cursor = conn.cursor()
 
         cursor.execute(" INSERT INTO keywords (keyword) VALUES (?) ON CONFLICT DO NOTHING", ((keyword,)))
-        keyword_id = cursor.lastrowid
+        
+        cursor.execute("SELECT id FROM keywords WHERE keyword = ?", (keyword,))
+        keyword_id = cursor.fetchone()[0]
     
         conn.commit()
         conn.close()

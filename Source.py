@@ -14,6 +14,8 @@ import concurrent.futures
 from yake import KeywordExtractor
 from geopy.distance import geodesic
 
+from datetime import datetime, timedelta
+
 import pandas
 
 config = configparser.RawConfigParser()
@@ -21,16 +23,10 @@ config.read('config.ini')
 config_dict = dict(config.items('Search'))
 
 QUERY_API = float(config_dict["query_api"])
-SCRAPE_CUSTOM = float(config_dict["scrape_custom"])
-SCRAPE_FROM_CUSTOM = float(config_dict["scrape_from_custom"])
 
 KEYWORD_MATCH_RELEVANCE_VALUE = float(config_dict["keyword_match_relevance_value"])
-KEYWORD_IN_TITLE_RELEVANCE_VALUE = float(config_dict["keyword_in_title_relevance_value"])
-KEYWORD_IN_DESCRIPTION_RELEVANCE_VALUE = float(config_dict["keyword_in_description_relevance_value"])
 
 HISTORICAL_KEYWORD_MATCH_RELEVANCE_VALUE = float(config_dict["historical_keyword_match_relevance_value"])
-HISTORICAL_KEYWORD_IN_TITLE_RELEVANCE_VALUE = float(config_dict["historical_keyword_in_title_relevance_value"])
-HISTORICAL_KEYWORD_IN_DESCRIPTION_RELEVANCE_VALUE = float(config_dict["historical_keyword_in_description_relevance_value"])
 
 CONTEXT_SEACRH = float(config_dict["context_search_on"])
 
@@ -39,70 +35,43 @@ MAX_DISTANCE_RELEVANCE_VALUE = float(config_dict["max_distance_relevance_value"]
 
 STAT = config_dict["statistics"]
 
-def Search_internal(query, context_params = {}):
+
+def Search_internal(query):
     # Dictionary contains results and relevance scores
     result_urls = []
 
     columns = ["url", "valid", "real_relevance_score", "title_match", "keywords_match", "description_match"]
     stat_df = pandas.DataFrame(columns=columns)
 
-    if not CONTEXT_SEACRH:
-        context_params = {}
-
-    if QUERY_API:
-        # Getting query results via news api
-        if 'time' in context_params:
-            api_result_urls = QueryNewsAPI(query, context_params['time'])
-        else:
+    
+    if CONTEXT_SEACRH:
+        # Time context
+            today = datetime.today()
+            current_time = datetime.now().time()
+            target_time = datetime.strptime('16:00', '%H:%M').time()
+            if current_time > target_time:
+                three_days_ago = today - timedelta(days=3)
+                time = {'from' : three_days_ago.strftime('%Y-%m-%d')}
+            else:
+                four_days_ago = today - timedelta(days=4)
+                time = {'from' : four_days_ago.strftime('%Y-%m-%d')}
+            api_result_urls = QueryNewsAPI(query, time)
+    else:
             api_result_urls = QueryNewsAPI(query)
         
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+    with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = {executor.submit(CheckURLStatus, url): url for url in api_result_urls}
             for future in futures:
                 url = futures[future]
                 if STAT:
-                    stat_df = pandas.concat([stat_df, pandas.DataFrame([{"url" : url, "valid" : 0, "real_relevance_score" : 0, "title_match" : 0, "keywords_match" : 0, "description_match" : 0}])], ignore_index=True)
+                    stat_df = pandas.concat([stat_df, pandas.DataFrame([{"url" : url, "valid" : 0, "relevance_score" : 0}])], ignore_index=True)
                 url_id, title, description = future.result()  
                 
                 if url_id:  
                     result_urls.append((url_id, title, description, url))
                     AddPublicationDate(api_result_urls[url], url_id)
                     if STAT:
-                        stat_df.loc[stat_df["url"] == url, "valid"] = 1
-
-    if SCRAPE_FROM_CUSTOM:
-        # Scraping from custom urls
-        with open('CustomURLsToScrapeFrom.txt', 'r') as file:
-            custom_urls = [line.strip() for line in file.readlines()]
-
-            for base_url in custom_urls:
-                urls = ScrapePage(base_url);
-                for url in urls:
-                    url = urljoin(base_url, url)
-                    if STAT:
-                        stat_df = pandas.concat([stat_df, pandas.DataFrame([{"url" : url, "valid" : 0, "real_relevance_score" : 0, "title_match" : 0, "keywords_match" : 0, "description_match" : 0}])], ignore_index=True)
-                    url_id, title, description = CheckURLStatus(url)
-                    if url_id:
-                        result_urls.append((url_id, title, description, url))
-                        if STAT:
-                            stat_df.loc[stat_df["url"] == url, "valid"] = True
-
-    if SCRAPE_CUSTOM:
-        # Scraping custom urls
-        with open('CustomURLsToSearchIn.txt', 'r') as file:
-            custom_urls = [line.strip() for line in file.readlines()]
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = {executor.submit(CheckURLStatus, url): url for url in custom_urls}
-                for future in futures:
-                    url_id, title, description = future.result()  
-                    url = futures[future]
-                    if STAT:
-                        stat_df = pandas.concat([stat_df, pandas.DataFrame([{"url" : url, "valid" : 0, "real_relevance_score" : 0, "title_match" : 0, "keywords_match" : 0, "description_match" : 0}])], ignore_index=True)
-                    if url_id:  
-                        result_urls.append((url_id, title, description, url))
-                        if STAT:
-                            stat_df.loc[stat_df["url"] == url, "valid"] = True
+                        stat_df.loc[stat_df["url"] == url, "valid"] = 1  
 
     #
     # URLs collection finished, filtering relevant results
@@ -110,7 +79,7 @@ def Search_internal(query, context_params = {}):
 
     relevance_scores = {}
     stat = []
-    # Init relevance_score for each url as open page rank
+    # Init relevance_score 
     for url in result_urls:
         relevance_scores[url[0]] = 0
 
@@ -122,49 +91,12 @@ def Search_internal(query, context_params = {}):
     else:
         query_keywords = query
 
-    for url in result_urls:
 
-        title_keywords = []
-        if url[1]:  
-            title_keywords = kw_extractor.extract_keywords(url[1])
-            title_keywords = list(zip(*title_keywords))[0]
-
-        description_keywords = []
-        if url[2]:  
-            description_keywords = kw_extractor.extract_keywords(url[2])
-            if description_keywords:
-                description_keywords = list(zip(*description_keywords))[0]
-                
-
-        for keyword in query_keywords:
-            # Two or more word keywords are more valuable
-            keyword_len = len(keyword.split())
-
-            keyword_id = GetKeywordID(keyword)
-            if keyword_id:    
-                # + relevance for keyword match
-                if LinkKeywordConnectionExists(url[0], keyword_id):
-                    relevance_scores[url[0]] += KEYWORD_MATCH_RELEVANCE_VALUE * keyword_len
-                    if STAT:
-                        stat_df.loc[stat_df["url"] == url[3], "keywords_match"] = 1
-            
-            # + relevance for keywords in title
-            if keyword in title_keywords:
-                relevance_scores[url[0]] += KEYWORD_IN_TITLE_RELEVANCE_VALUE * keyword_len
-                if STAT:
-                    stat_df.loc[stat_df["url"] == url[3], "title_match"] = 1
-                
-            # + relevance for keywords in description        
-            if keyword in description_keywords:  
-                 relevance_scores[url[0]] += KEYWORD_IN_DESCRIPTION_RELEVANCE_VALUE * keyword_len
-                 if STAT:
-                    stat_df.loc[stat_df["url"] == url[3], "description_match"] = 1
-
-
-        if CONTEXT_SEACRH:
-            history = []
-            kw_extractor = KeywordExtractor()
-            with open('search_history', 'r') as file:
+    if CONTEXT_SEACRH:
+        # History context
+        history = []
+        kw_extractor = KeywordExtractor()
+        with open('search_history', 'r') as file:
                 SEARCH_HISTORY_LINES_USED = 3
                 for i in range(SEARCH_HISTORY_LINES_USED):
                     query= file.readline()
@@ -174,31 +106,33 @@ def Search_internal(query, context_params = {}):
                     else:
                         query_keywords = query
                     history.extend(query_keywords)
-
-            for keyword in history:
-                # Two or more word keywords are more valuable
-                keyword_len = len(keyword.split())
-
-                keyword_id = GetKeywordID(keyword)
-                if keyword_id:    
-                    # + relevance for keyword match
-                    if LinkKeywordConnectionExists(url[0], keyword_id):
-                        relevance_scores[url[0]] += HISTORICAL_KEYWORD_MATCH_RELEVANCE_VALUE * keyword_len
-            
-                # + relevance for keywords in title
-                if keyword in title_keywords:
-                    relevance_scores[url[0]] += HISTORICAL_KEYWORD_IN_TITLE_RELEVANCE_VALUE * keyword_len
-                
-                # + relevance for keywords in description        
-                if keyword in description_keywords:  
-                     relevance_scores[url[0]] += HISTORICAL_KEYWORD_IN_DESCRIPTION_RELEVANCE_VALUE * keyword_len
-                  
-
-    for url in result_urls:
-        relevance_scores[url[0]] = relevance_scores[url[0]] * GetDomainOpenPageRank(GetDomainByLinkID(url[0]))
-        
     with open("search_history", "a") as file:
         file.write(query + "\n")
+
+    for url in result_urls:
+        for keyword in query_keywords:
+            # Two or more word keywords are more valuable
+            keyword_len = len(keyword.split())
+
+            keyword_id = GetKeywordID(keyword)
+            if keyword_id:    
+                # + relevance for keyword match
+                if LinkKeywordConnectionExists(url[0], keyword_id):
+                    relevance_scores[url[0]] += KEYWORD_MATCH_RELEVANCE_VALUE * keyword_len
+
+
+        if CONTEXT_SEACRH:
+            # History context
+            for keyword in history:
+                keyword_len = len(keyword.split())
+                keyword_id = GetKeywordID(keyword)
+                if keyword_id:    
+                    if LinkKeywordConnectionExists(url[0], keyword_id):
+                        relevance_scores[url[0]] += HISTORICAL_KEYWORD_MATCH_RELEVANCE_VALUE * keyword_len
+                         
+    # Ommiting irrelevant
+    for url in result_urls:
+        relevance_scores[url[0]] = relevance_scores[url[0]] * GetDomainOpenPageRank(GetDomainByLinkID(url[0]))
     
     # Deleting irrelevant results
     relevance_scores = {key: value for key, value in relevance_scores.items() if value != 0}
@@ -246,15 +180,6 @@ def Search(query, context_params = {}):
 
 
 CreateMainDB()
-context_params = {
-    'time' : {
-        'to' : '2024-11-15',
-        'from' : '2024-11-28'
-        },
-
-    'location' : 'loc'
-}
 res = Search('natural disaster')
-
 #url_id, title, description =CheckURLStatus('https://www.wired.com/story/buy-a-car-on-amazon-hyundai/')
 #print(title)
