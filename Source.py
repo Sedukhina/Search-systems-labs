@@ -11,7 +11,8 @@ from urllib.parse import urljoin
 # Concurrency
 import concurrent.futures
 
-from yake import KeywordExtractor
+from TextProcessing import GetKeywords
+
 from geopy.distance import geodesic
 
 from datetime import datetime, timedelta
@@ -40,7 +41,7 @@ def Search_internal(query):
     # Dictionary contains results and relevance scores
     result_urls = []
 
-    columns = ["url", "valid", "real_relevance_score", "title_match", "keywords_match", "description_match"]
+    columns = ["url", "valid", "relevance_score"]
     stat_df = pandas.DataFrame(columns=columns)
 
     
@@ -50,10 +51,10 @@ def Search_internal(query):
             current_time = datetime.now().time()
             target_time = datetime.strptime('16:00', '%H:%M').time()
             if current_time > target_time:
-                three_days_ago = today - timedelta(days=3)
+                three_days_ago = today - timedelta(days=7)
                 time = {'from' : three_days_ago.strftime('%Y-%m-%d')}
             else:
-                four_days_ago = today - timedelta(days=4)
+                four_days_ago = today - timedelta(days=8)
                 time = {'from' : four_days_ago.strftime('%Y-%m-%d')}
             api_result_urls = QueryNewsAPI(query, time)
     else:
@@ -84,30 +85,16 @@ def Search_internal(query):
         relevance_scores[url[0]] = 0
 
     # Extracting keywords from query
-    kw_extractor = KeywordExtractor()
-    query_keywords = kw_extractor.extract_keywords(query)
-    if query_keywords:
-        query_keywords = list(zip(*query_keywords))[0]
-    else:
-        query_keywords = query
-
+    query_keywords = GetKeywords(query)
 
     if CONTEXT_SEACRH:
         # History context
         history = []
-        kw_extractor = KeywordExtractor()
         with open('search_history', 'r') as file:
                 SEARCH_HISTORY_LINES_USED = 3
                 for i in range(SEARCH_HISTORY_LINES_USED):
-                    query= file.readline()
-                    query_keywords = kw_extractor.extract_keywords(query)
-                    if query_keywords:
-                        query_keywords = list(zip(*query_keywords))[0]
-                    else:
-                        query_keywords = query
-                    history.extend(query_keywords)
-    with open("search_history", "a") as file:
-        file.write(query + "\n")
+                    history_query = file.readline()
+                    history.extend(GetKeywords(history_query))
 
     for url in result_urls:
         for keyword in query_keywords:
@@ -133,9 +120,8 @@ def Search_internal(query):
     # Ommiting irrelevant
     for url in result_urls:
         relevance_scores[url[0]] = relevance_scores[url[0]] * GetDomainOpenPageRank(GetDomainByLinkID(url[0]))
-    
-    # Deleting irrelevant results
-    relevance_scores = {key: value for key, value in relevance_scores.items() if value != 0}
+
+
 
     if CONTEXT_SEACRH:
         # User location
@@ -145,16 +131,17 @@ def Search_internal(query):
         user_location = data.get("loc", "")
 
         for url in result_urls:
-            # Use closest of locations mentioned in article to measure distance
-            url_coords = GetURLCoords(url[0]) 
-            if url_coords:
-                # Max distance between 2 settlements
-                min_dist = 20000
-                for coords in url_coords:
-                    min_dist = min(min_dist, geodesic(user_location, coords).kilometers)
-                # Relevant distance threshold
-                if min_dist < RELEVANT_DISTANCE_THRESHOLD:
-                    relevance_scores[url[0]] += (1 - min_dist/RELEVANT_DISTANCE_THRESHOLD) * MAX_DISTANCE_RELEVANCE_VALUE
+            if url[0] in relevance_scores.keys():
+                # Use closest of locations mentioned in article to measure distance
+                url_coords = GetURLCoords(url[0]) 
+                if url_coords:
+                    # Max distance between 2 settlements
+                    min_dist = 20000
+                    for coords in url_coords:
+                        min_dist = min(min_dist, geodesic(user_location, coords).kilometers)
+                    # Relevant distance threshold
+                    if min_dist < RELEVANT_DISTANCE_THRESHOLD:
+                        relevance_scores[url[0]] += (1 - min_dist/RELEVANT_DISTANCE_THRESHOLD) * MAX_DISTANCE_RELEVANCE_VALUE
     
     
     result = []
@@ -163,13 +150,19 @@ def Search_internal(query):
        url_tuple = [tup for tup in result_urls if tup[0] == key]
        if STAT:
             stat_df.loc[stat_df["url"] == url_tuple[0][3], "relevance_score"] = value
-       print(url_tuple[0][3])
-       print(value)
+       #print(url_tuple[0][3])
+       print('Score:', value)
+       print('Title:', url_tuple[0][1])
+       print('Description:', url_tuple[0][2])
+       print("")
        result.append([url_tuple[0][1], url_tuple[0][2], url_tuple[0][3]])
 
 
     stat_path = "last_search_stat.csv"
     stat_df.to_csv(stat_path, index=False)
+
+    with open('search_history', 'a') as file:
+        file.write(query + "\n")
 
     return result
 
@@ -180,6 +173,7 @@ def Search(query, context_params = {}):
 
 
 CreateMainDB()
-res = Search('natural disaster')
+res = Search('stock market trends')
+#print(GetKeywords('financial crisis'))
 #url_id, title, description =CheckURLStatus('https://www.wired.com/story/buy-a-car-on-amazon-hyundai/')
 #print(title)

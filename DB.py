@@ -281,18 +281,19 @@ def GetLinkByID(link_id):
     return domain, link[0]
 
 def AddPublicationDate(date, link_id):
-    conn = sqlite3.connect("main.db")
-    cursor = conn.cursor()
+    with db_lock:
+        conn = sqlite3.connect("main.db")
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM links WHERE id = ? ", (link_id,))
-    link = cursor.fetchone()
-    if link == None:
+        cursor.execute("SELECT * FROM links WHERE id = ? ", (link_id,))
+        link = cursor.fetchone()
+        if link == None:
+            conn.close()
+            return None
+
+        cursor.execute("UPDATE links SET publication_date = ? WHERE id = ?", (date, link_id))
+        conn.commit()
         conn.close()
-        return None
-
-    cursor.execute("UPDATE links SET publication_date = ? WHERE id = ?", (date, link_id))
-    conn.commit()
-    conn.close()
 
 
 def GetCountryID(country):
@@ -441,19 +442,18 @@ def GetURLCoords(link_id):
         cursor.execute("SELECT location_id, location_type FROM links_locations WHERE link_id = ? ", (link_id,))
         locations = cursor.fetchall()
         
-        conn.close()
-        
         result = []
         for location_id, location_type in locations:
             if location_type == LOCATION_TYPES.SETTLEMENT.value:
-                cursor.execute("SELECT latitude, longitude FROM settlement WHERE id = ? ", (location_id,))
+                cursor.execute("SELECT latitude, longitude FROM settlements WHERE id = ? ", (location_id,))
             elif location_type == LOCATION_TYPES.STATE.value:
-                cursor.execute("SELECT latitude, longitude FROM state WHERE id = ? ", (location_id,))
+                cursor.execute("SELECT latitude, longitude FROM states WHERE id = ? ", (location_id,))
             else:
-                cursor.execute("SELECT latitude, longitude FROM countr WHERE id = ? ", (location_id,))
+                cursor.execute("SELECT latitude, longitude FROM countries WHERE id = ? ", (location_id,))
             res = cursor.fetchone()
             if res:
                 result.append(res)
+        conn.close()
                 
         return result
     return None
